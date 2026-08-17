@@ -63,27 +63,70 @@ def main() -> int:
     n_src = len(list(SRC.glob("*.parquet")))
     print(f"  nguồn : {SRC}  ({n_src:,} file)")
 
-    # TODO(nhiệm vụ 4): hiện thực khung COPY ... TO ... ở phần docstring.
-    #
-    #   con.execute(f"""
-    #       copy (
-    #           select * from read_parquet('{SRC}/*.parquet')
-    #           order by ...
-    #       ) to '{DST}' (
-    #           format parquet,
-    #           partition_by (...),
-    #           overwrite_or_ignore,
-    #           row_group_size ...
-    #       )
-    #   """)
-    #
-    # Sau đó kiểm tra không mất hàng nào:
-    #
-    #   assert <số row dataset cũ> == <số row dataset mới>
+    src_rows = con.execute(
+        f"select count(*) from read_parquet('{SRC}/*.parquet')"
+    ).fetchone()[0]
 
-    print("\n  tools/compact.py chưa được hiện thực — đây là nhiệm vụ 4.")
-    print("  Mở file này, đọc phần KHUNG THỰC HIỆN ở đầu file và điền vào TODO.")
-    print("  Hướng dẫn từng bước: GUIDE.md mục 4.\n")
+    # ------------------------------------------------------------------
+    # Ba quyết định của layout mới. Đóng góp của từng quyết định vào
+    # `rows scanned` đã được đo riêng (query lọc ACME + ngày 2026-08-09):
+    #
+    #     5.000 file phẳng (hiện trạng)               5.000.000
+    #     gộp file, có sắp thứ tự, KHÔNG partition      130.683   (38×)
+    #     14 partition, KHÔNG sắp thứ tự                  9.324   (536×)
+    #     14 partition + sắp thứ tự  <- bản này          9.324   (536×)
+    #
+    # partition_by (event_date)
+    #   Dashboard lọc theo hai cột: customer_name và ngày của event_time.
+    #   Engine chỉ bỏ qua được file mà nó biết là vô ích TRƯỚC khi mở file, và
+    #   thông tin duy nhất nó có trước đó là ĐƯỜNG DẪN. event_date có 14 giá trị
+    #   -> 14 thư mục, lọc một ngày là bỏ qua 13/14 dữ liệu mà không đọc byte
+    #   nào: 130.683 -> 9.324 rows scanned. Đây là phần đóng góp lớn thứ hai,
+    #   và nó chỉ phát huy khi điều kiện lọc được viết sargable — `event_date =
+    #   date '...'` chứ không phải `strftime(event_time, '%Y-%m-%d') = '...'`.
+    #   Không partition theo customer_name: cột đó có 650 giá trị phân biệt, tức
+    #   650 thư mục cho 130.683 hàng (~200 hàng/thư mục) — chính là small-file
+    #   problem vừa sửa, chỉ đổi hình dạng.
+    #
+    # order by customer_name, event_time
+    #   Ý định: xếp các hàng cùng một khách liền nhau để thống kê min/max của
+    #   mỗi row group loại được row group không chứa 'ACME'.
+    #   ĐO THỰC TẾ: đóng góp BẰNG KHÔNG (9.324 dù có sắp hay không). Lý do:
+    #   'ACME' là tên đứng đầu alphabet VÀ chiếm ~37% số hàng mỗi ngày, nên dù
+    #   đã sắp thứ tự nó vẫn nằm trong các row group đầu và trải rộng gần nửa
+    #   file — không có row group nào bị loại. Vẫn giữ ORDER BY vì nó làm dữ
+    #   liệu clustered theo khách (có ích cho khách hàng hiếm, và cho nén), song
+    #   không được tính là nguyên nhân của con số 536× trong báo cáo.
+    #
+    # row_group_size 2048
+    #   Một ngày chỉ ~9.330 hàng, mặc định là 122.880 -> cả ngày gói trong MỘT
+    #   row group, min/max của nó phủ toàn bộ 650 khách và mất hết tác dụng lọc.
+    #   2.048 = kích thước vector của DuckDB (nhỏ hơn nữa thì chi phí metadata
+    #   lấn phần công đọc tiết kiệm được) -> 5 row group mỗi ngày.
+    # ------------------------------------------------------------------
+    con.execute(f"""
+        copy (
+            select * from read_parquet('{SRC}/*.parquet')
+            order by customer_name, event_time
+        ) to '{DST}' (
+            format          parquet,
+            partition_by    (event_date),
+            overwrite_or_ignore,
+            row_group_size  2048
+        )
+    """)
+
+    dst_files = sorted(DST.glob("**/*.parquet"))
+    dst_rows = con.execute(
+        f"select count(*) from read_parquet('{DST}/**/*.parquet', hive_partitioning = true)"
+    ).fetchone()[0]
+
+    assert dst_rows == src_rows, f"mất dữ liệu: {src_rows:,} -> {dst_rows:,}"
+
+    print(f"  đích  : {DST}  ({len(dst_files):,} file / "
+          f"{len(list(DST.glob('*')))} thư mục partition)")
+    print(f"  số hàng: {src_rows:,} -> {dst_rows:,}  (không mất hàng nào)")
+    print("\n  xong. Đo lại bằng:  make explain\n")
     return 0
 
 

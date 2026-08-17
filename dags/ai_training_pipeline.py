@@ -33,8 +33,14 @@ with DAG(
     # TODO (nhiệm vụ 1): hai tham số dưới đây quyết định chuyện gì xảy ra
     # khi ai đó bấm Clear Task, và khi DAG bị dồn nhiều lần chạy cùng lúc.
     # Đọc lại triệu chứng ở phiếu #1041 rồi đặt lại cho đúng.
-    catchup=True,
-    # max_active_runs=?
+    # catchup=False: không tự sinh loạt run bù cho quá khứ. Với catchup=True,
+    # mỗi lần DAG được bật lại/đổi start_date Airflow xếp hàng 14 run quá khứ,
+    # tức 14 lần ghi vào cùng bảng Gold mà không ai chủ ý yêu cầu.
+    catchup=False,
+    # max_active_runs=1: không cho hai run ghi đồng thời vào cùng một bảng.
+    # Clear Task tạo thêm một run cho ngày cũ; nếu run hôm nay vẫn đang chạy,
+    # hai tiến trình cùng ghi gold_* và kết quả phụ thuộc thứ tự về đích.
+    max_active_runs=1,
     # ------------------------------------------------------------------
 ) as dag:
 

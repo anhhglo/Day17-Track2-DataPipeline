@@ -35,16 +35,36 @@
 
 {{ config(materialized = 'table') }}
 
-with ranked as (
+with normalized as (
 
     select
         *,
-        {{ normalize_priority('priority_raw') }}             as priority_clean,
+        {{ normalize_priority('priority_raw') }}             as priority_clean
+    from {{ source('bronze', 'bronze_tickets_cdc') }}
+
+),
+
+cleaned as (
+
+    -- LỌC TRƯỚC, XẾP HẠNG SAU. Đo trên dữ liệu thật: cả 312 bản ghi CDC lỗi
+    -- đều là bản ghi MỚI NHẤT (rn = 1, op = 'u') của ticket tương ứng. Nếu lọc
+    -- sau row_number() thì 312 ticket đó rụng khỏi Silver (12.480 -> 12.168) và
+    -- gold_training_set hụt theo. Lọc trước thì bản ghi hợp lệ liền trước lên
+    -- làm rn = 1: ta loại BẢN GHI hỏng, không loại cả TICKET — và đã kiểm tra
+    -- cả 312 ticket đều còn một trạng thái hợp lệ từ lần cập nhật trước đó.
+    select * from normalized where priority_clean is not null
+
+),
+
+ranked as (
+
+    select
+        *,
         row_number() over (
             partition by ticket_id
             order by event_time desc, cdc_seq desc
         ) as _rn
-    from {{ source('bronze', 'bronze_tickets_cdc') }}
+    from cleaned
 
 ),
 
