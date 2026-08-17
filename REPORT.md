@@ -6,7 +6,34 @@ Ba nhiệm vụ chính đạt đủ, kèm cả hai bài mở rộng trong `EXTRA
 
 ---
 
-## 0 · Kết quả `make verify`
+## Cách chấm lại bài này
+
+```bash
+make setup        # venv + thư viện + sinh 14 ngày dữ liệu
+make seed-extra   # BẮT BUỘC — sinh data/gold_events/ (~5.000 file, vài phút)
+make compact      # BẮT BUỘC — sinh data/gold_events_v2/ mà dashboard.sql đọc
+make verify       # 4/4 tiêu chí
+make explain      # bài mở rộng A
+make crash-test   # bài mở rộng B
+```
+
+Hai bước giữa **bắt buộc chạy trước `make verify`**, kể cả khi chỉ muốn chấm ba
+nhiệm vụ chính. Lý do nằm ở chính repo gốc, không phải ở bài làm:
+`expected/dashboard_baseline.json` được commit sẵn trong repo, trong khi `data/`
+nằm trong `.gitignore`. `tools/verify.py` quyết định có đo dashboard hay không
+bằng `BASELINE_FILE.exists()`, mà file đó luôn tồn tại trên bản clone mới — nên
+verify luôn chạy phần đo dashboard và sẽ đổ `IOException: No files found` nếu
+thư mục dữ liệu chưa được sinh. Trên repo gốc chưa sửa gì, `make setup && make
+verify` cũng đổ đúng như vậy.
+
+Vì bài mở rộng A đã đổi `queries/dashboard.sql` sang dataset đã nén, `make
+compact` là bước sinh dataset đó — tương ứng đúng ghi chú trong `GUIDE.md`:
+*"nếu đã làm xong nhiệm vụ 4, bạn phải chạy lại `make compact`"* sau mỗi lần
+seed lại.
+
+---
+
+## 0 · Kết quả các script chấm
 
 <details>
 <summary><code>make verify</code> — output ba lượt chạy (bấm để mở)</summary>
